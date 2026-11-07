@@ -5,8 +5,10 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from valutatrade_hub.core import utils
+from valutatrade_hub.core.currencies import get_currency
+from valutatrade_hub.core.exceptions import ApiRequestError, InsufficientFundsError
 from valutatrade_hub.core.models import Portfolio, User
-from valutatrade_hub.core.rates import RateService, RateUnavailableError
+from valutatrade_hub.core.rates import RateService
 from valutatrade_hub.core.storage import JsonStorage, StorageError
 
 
@@ -75,9 +77,7 @@ class WalletService:
 
     def show_portfolio(self, base_currency: str = "USD") -> dict:
         _, portfolio = self._load_portfolio()
-        base = utils.currency_code(base_currency)
-        if base not in self.rates.supported_currencies:
-            raise ValueError(f"Неизвестная базовая валюта '{base}'")
+        base = get_currency(base_currency).code
         wallets = portfolio.wallets
         quotes = {"USD": 1.0}
         if wallets:
@@ -108,21 +108,17 @@ class WalletService:
 
     def _trade(self, operation: str, currency_code: str, amount: float) -> dict:
         portfolios, portfolio = self._load_portfolio()
-        code = utils.currency_code(currency_code)
+        code = get_currency(currency_code).code
         amount = utils.number(amount, positive=True)
         wallet = portfolio.wallets.get(code)
         if operation == "sell":
-            wallet = portfolio.get_wallet(code)
+            if wallet is None:
+                raise InsufficientFundsError(0.0, amount, code)
             if amount > wallet.balance:
                 # Использовать ту же проверку и сообщение, что и в модели.
                 wallet.withdraw(amount)
         before = wallet.balance if wallet is not None else 0.0
-        try:
-            quote = self.rates.get_rate(code, "USD")
-        except RateUnavailableError as error:
-            raise RateUnavailableError(
-                f"Не удалось получить курс для {code}→USD"
-            ) from error
+        quote = self.rates.get_rate(code, "USD")
         estimated_value = utils.number(amount * quote.rate, label="Стоимость сделки")
         if wallet is None:
             wallet = portfolio.add_currency(code)
@@ -142,15 +138,13 @@ class WalletService:
         }
 
     def get_rate(self, from_currency: str, to_currency: str) -> dict:
-        source = utils.currency_code(from_currency)
-        target = utils.currency_code(to_currency)
+        source = get_currency(from_currency).code
+        target = get_currency(to_currency).code
         quote = self.rates.get_rate(source, target)
         try:
             inverse = utils.number(1 / quote.rate, positive=True)
         except ValueError as error:
-            raise RateUnavailableError(
-                f"Курс {source}→{target} недоступен. Повторите попытку позже."
-            ) from error
+            raise ApiRequestError(f"Курс {source}→{target} недоступен") from error
         return {
             "from_currency": source,
             "to_currency": target,

@@ -5,11 +5,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from valutatrade_hub.core import utils
+from valutatrade_hub.core.currencies import get_currency, supported_codes
+from valutatrade_hub.core.exceptions import ApiRequestError
 from valutatrade_hub.core.storage import JsonStorage
-
-
-class RateUnavailableError(ValueError):
-    """Свежий курс получить не удалось."""
 
 
 @dataclass(frozen=True)
@@ -48,11 +46,7 @@ class RateService:
 
     @property
     def supported_currencies(self) -> set[str]:
-        codes = set(utils.DEFAULT_USD_RATES)
-        for pair in self.storage.load_rates():
-            if pair not in ("source", "last_refresh"):
-                codes.update(pair.split("_"))
-        return codes
+        return set(supported_codes())
 
     def _fresh(self, data: dict, pair: str, now: datetime) -> RateQuote | None:
         entry = data.get(pair)
@@ -97,25 +91,25 @@ class RateService:
         return RateQuote(rate, min(source_usd.updated_at, usd_target.updated_at))
 
     def get_rate(self, from_currency: str, to_currency: str) -> RateQuote:
-        source = utils.currency_code(from_currency)
-        target = utils.currency_code(to_currency)
+        source = get_currency(from_currency).code
+        target = get_currency(to_currency).code
         now = utils.utc_time(self.clock())
-        if source == target and source in self.supported_currencies:
+        if source == target:
             return RateQuote(1.0, now)
         cached = self.storage.load_rates()
         quote = self._find(cached, source, target, now)
         if quote is not None:
             return quote
-        message = f"Курс {source}→{target} недоступен. Повторите попытку позже."
+        message = f"Курс {source}→{target} недоступен"
         try:
             refreshed = self.provider()
             self.storage.validate_rates(refreshed)
             # Провайдер мог поставить метку времени позже начала запроса.
             refreshed_now = utils.utc_time(self.clock())
             quote = self._find(refreshed, source, target, refreshed_now)
-        except (OSError, ValueError, TypeError, KeyError) as error:
-            raise RateUnavailableError(message) from error
+        except (OSError, ValueError, TypeError, KeyError, RuntimeError) as error:
+            raise ApiRequestError(message) from error
         if quote is None:
-            raise RateUnavailableError(message)
+            raise ApiRequestError(message)
         self.storage.save_rates(refreshed)
         return quote

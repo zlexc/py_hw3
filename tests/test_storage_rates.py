@@ -8,8 +8,9 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from tests.helpers import NOW, make_user
+from valutatrade_hub.core.exceptions import ApiRequestError, CurrencyNotFoundError
 from valutatrade_hub.core.models import Portfolio, Wallet
-from valutatrade_hub.core.rates import RateService, RateUnavailableError
+from valutatrade_hub.core.rates import RateService
 from valutatrade_hub.core.storage import JsonStorage, StorageError
 
 
@@ -128,7 +129,7 @@ class RateTests(unittest.TestCase):
             with self.subTest(timestamp=timestamp):
                 self.cache(BTC_USD=(60000, timestamp))
                 original = self.storage.load_rates()
-                with self.assertRaisesRegex(RateUnavailableError, "Повторите попытку"):
+                with self.assertRaisesRegex(ApiRequestError, "Курс BTC→USD недоступен"):
                     self.service.get_rate("BTC", "USD")
                 self.assertEqual(self.storage.load_rates(), original)
 
@@ -137,14 +138,28 @@ class RateTests(unittest.TestCase):
         self.provider.assert_not_called()
         for source, target in (("ABC", "USD"), ("ABC", "ABC")):
             with self.subTest(source=source, target=target):
-                with self.assertRaises(RateUnavailableError):
+                with self.assertRaises(CurrencyNotFoundError):
                     self.service.get_rate(source, target)
+        self.provider.assert_not_called()
 
     def test_malformed_provider_response_does_not_overwrite_cache(self):
         self.cache(BTC_USD=(60000, NOW - timedelta(minutes=10)))
         original = self.storage.load_rates()
         self.provider.side_effect = None
         self.provider.return_value = {"BTC_USD": {"rate": True, "updated_at": "bad"}}
-        with self.assertRaises(RateUnavailableError):
+        with self.assertRaises(ApiRequestError):
             self.service.get_rate("BTC", "USD")
         self.assertEqual(self.storage.load_rates(), original)
+
+    def test_cached_pair_does_not_register_an_unknown_currency(self):
+        self.cache(ABC_USD=(1.0, NOW))
+        with self.assertRaises(CurrencyNotFoundError):
+            self.service.get_rate("ABC", "USD")
+        self.assertNotIn("ABC", self.service.supported_currencies)
+        self.provider.assert_not_called()
+
+    def test_corrupt_cache_is_a_storage_error_not_an_api_error(self):
+        (self.storage.data_dir / "rates.json").write_text("broken")
+        with self.assertRaises(StorageError):
+            self.service.get_rate("BTC", "USD")
+        self.provider.assert_not_called()

@@ -9,7 +9,8 @@ from unittest.mock import Mock, patch
 
 from tests.helpers import NOW
 from valutatrade_hub.cli.interface import WalletApplication
-from valutatrade_hub.core.rates import RateService, RateUnavailableError
+from valutatrade_hub.core.exceptions import ApiRequestError
+from valutatrade_hub.core.rates import RateService
 from valutatrade_hub.core.storage import JsonStorage, StorageError
 from valutatrade_hub.core.usecases import WalletService
 
@@ -104,7 +105,7 @@ class TradingTests(ServiceFixture):
         result = self.service.show_portfolio()
         self.assertEqual(result["wallets"], [])
         self.assertEqual(result["total"], 0)
-        with self.assertRaisesRegex(ValueError, "Неизвестная базовая валюта 'ABC'"):
+        with self.assertRaisesRegex(ValueError, "Неизвестная валюта 'ABC'"):
             self.service.show_portfolio("abc")
 
     def test_buy_sell_and_restart_preserve_balances_without_usd_settlement(self):
@@ -170,9 +171,7 @@ class TradingTests(ServiceFixture):
         )
         self.service.rates = failed_rates
         for operation in (self.service.buy, self.service.sell):
-            with self.assertRaisesRegex(
-                RateUnavailableError, "Не удалось получить курс"
-            ):
+            with self.assertRaisesRegex(ApiRequestError, "Курс BTC→USD недоступен"):
                 operation("BTC", 0.01)
             self.assertEqual(self.account_files(), original)
         self.service.rates = RateService(self.storage, clock=lambda: NOW)

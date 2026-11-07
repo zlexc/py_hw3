@@ -18,9 +18,15 @@ def currency_code(value: str) -> str:
     if not isinstance(value, str):
         raise ValueError("Код валюты должен быть непустой строкой")
     normalized = value.strip().upper()
-    if not re.fullmatch(r"[A-Z][A-Z0-9]*", normalized):
-        raise ValueError("Код валюты должен содержать латинские буквы и цифры")
+    if not re.fullmatch(r"[A-Z][A-Z0-9]{1,4}", normalized):
+        raise ValueError("Код валюты: 2–5 латинских букв или цифр, первая — буква")
     return normalized
+
+
+def nonempty_text(value: str, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label} не может быть пустым")
+    return value.strip()
 
 
 def number(value: float, *, positive: bool = False, label: str = "Баланс") -> float:
