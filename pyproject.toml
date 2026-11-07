@@ -1,0 +1,29 @@
+[project]
+name = "finalproject_simonov_m26_555"
+version = "0.1.0"
+description = "Консольное приложение для работы с валютным кошельком"
+readme = "README.md"
+authors = [{ name = "Fyodor Simonov" }]
+requires-python = ">=3.12"
+dependencies = [
+    "prettytable>=3.18.0",
+]
+
+[project.scripts]
+wallet = "finalproject_simonov_m26_555.main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.17.4",
+]
