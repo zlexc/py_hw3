@@ -110,7 +110,9 @@ class RateService:
         try:
             refreshed = self.provider()
             self.storage.validate_rates(refreshed)
-            quote = self._find(refreshed, source, target, now)
+            # Провайдер мог поставить метку времени позже начала запроса.
+            refreshed_now = utils.utc_time(self.clock())
+            quote = self._find(refreshed, source, target, refreshed_now)
         except (OSError, ValueError, TypeError, KeyError) as error:
             raise RateUnavailableError(message) from error
         if quote is None:

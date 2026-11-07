@@ -70,7 +70,7 @@ class User:
         if not isinstance(password, str):
             return False
         candidate = hashlib.sha256((password + self.salt).encode("utf-8")).hexdigest()
-        return hmac.compare_digest(candidate, self.hashed_password)
+        return hmac.compare_digest(candidate.encode(), self.hashed_password.encode())
 
 
 class Wallet:

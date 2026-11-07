@@ -47,6 +47,10 @@ class UserTests(unittest.TestCase):
             with self.subTest(user_id=user_id), self.assertRaises(ValueError):
                 User(user_id, "alice", "hash", "salt", NOW)
 
+    def test_non_ascii_stored_hash_fails_verification_without_crashing(self):
+        user = User(1, "alice", "некорректный хеш", "salt", NOW)
+        self.assertFalse(user.verify_password("1234"))
+
 
 class WalletTests(unittest.TestCase):
     def test_deposit_withdraw_and_balance_info(self):

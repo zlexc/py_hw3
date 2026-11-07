@@ -16,3 +16,7 @@ wheels/
 .DS_Store
 .env
 .env.*
+
+# Runtime JSON storage
+data/*.json
+data/.*.tmp

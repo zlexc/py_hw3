@@ -114,6 +114,15 @@ class RateTests(unittest.TestCase):
         self.assertEqual(self.storage.load_rates()["source"], "Stub")
         self.assertEqual(self.storage.load_rates()["last_refresh"], NOW.isoformat())
 
+    def test_refresh_timestamp_can_follow_start_of_request(self):
+        clock = Mock(
+            side_effect=[NOW, NOW + timedelta(seconds=1), NOW + timedelta(seconds=2)]
+        )
+        service = RateService(self.storage, clock=clock)
+        quote = service.get_rate("BTC", "USD")
+        self.assertEqual(quote.rate, 59337.21)
+        self.assertEqual(quote.updated_at, NOW + timedelta(seconds=1))
+
     def test_failed_refresh_never_returns_stale_quote_or_changes_cache(self):
         for timestamp in (NOW - timedelta(minutes=5), NOW + timedelta(seconds=1)):
             with self.subTest(timestamp=timestamp):

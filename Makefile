@@ -1,6 +1,6 @@
 UV ?= uv
 
-.PHONY: install run lint format format-check check build
+.PHONY: install run lint format format-check test check build
 
 install:
 	$(UV) sync --locked
@@ -17,7 +17,10 @@ format:
 format-check:
 	$(UV) run --locked ruff format --check .
 
-check: lint format-check
+test:
+	$(UV) run --locked python -m unittest discover -s tests -t . -v
+
+check: lint format-check test
 
 build:
 	$(UV) build
