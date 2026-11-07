@@ -3,7 +3,9 @@
 import json
 import os
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
+from threading import RLock
 
 from valutatrade_hub.core import utils
 from valutatrade_hub.core.models import Portfolio, User, Wallet
@@ -18,6 +20,7 @@ class JsonStorage:
 
     def __init__(self, data_dir: str | Path = "data") -> None:
         self.data_dir = Path(data_dir)
+        self._operation_lock = RLock()
         # Проверить существующие файлы до создания недостающих.
         users = self.load_users()
         self.load_portfolios(users)
@@ -29,6 +32,12 @@ class JsonStorage:
         ):
             if not (self.data_dir / filename).exists():
                 self._write(filename, default)
+
+    @contextmanager
+    def operation(self):
+        """Сериализовать сценарии, использующие один экземпляр хранилища."""
+        with self._operation_lock:
+            yield self
 
     def _read(self, filename: str, default):
         try:
@@ -147,6 +156,8 @@ class JsonStorage:
         if not isinstance(data, dict):
             raise ValueError("ожидается объект курсов")
         for pair, entry in data.items():
+            if not isinstance(pair, str):
+                raise ValueError("ключ курса должен быть строкой")
             if pair == "source":
                 if not isinstance(entry, str):
                     raise ValueError("source должен быть строкой")

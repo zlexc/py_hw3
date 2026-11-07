@@ -10,6 +10,9 @@ from valutatrade_hub.core.exceptions import ApiRequestError, InsufficientFundsEr
 from valutatrade_hub.core.models import Portfolio, User
 from valutatrade_hub.core.rates import RateService
 from valutatrade_hub.core.storage import JsonStorage, StorageError
+from valutatrade_hub.decorators import log_action
+from valutatrade_hub.infra.database import DatabaseManager
+from valutatrade_hub.infra.settings import DEFAULT_SETTINGS, Settings, SettingsLoader
 
 
 class WalletService:
@@ -17,17 +20,27 @@ class WalletService:
 
     def __init__(
         self,
-        storage: JsonStorage,
+        storage: JsonStorage | DatabaseManager | None = None,
         rates: RateService | None = None,
         *,
         clock: Callable[[], datetime] | None = None,
+        settings: Settings | None = None,
     ) -> None:
-        self.storage = storage
+        if settings is None:
+            settings = SettingsLoader() if storage is None else DEFAULT_SETTINGS
+        self.settings = settings
+        self.storage = storage if storage is not None else DatabaseManager(settings)
         self.clock = clock or (lambda: datetime.now(UTC))
-        self.rates = rates or RateService(storage, clock=self.clock)
+        self.rates = rates or RateService(
+            self.storage, clock=self.clock, settings=self.settings
+        )
         self.current_user: User | None = None
 
     def register(self, username: str, password: str) -> dict:
+        with self.storage.operation():
+            return self._register(username, password)
+
+    def _register(self, username: str, password: str) -> dict:
         name = utils.username(username)
         users = self.storage.load_users()
         if any(user.username == name for user in users):
@@ -51,6 +64,10 @@ class WalletService:
         return user.get_user_info()
 
     def login(self, username: str, password: str) -> dict:
+        with self.storage.operation():
+            return self._login(username, password)
+
+    def _login(self, username: str, password: str) -> dict:
         name = utils.username(username)
         users = self.storage.load_users()
         user = next((user for user in users if user.username == name), None)
@@ -75,8 +92,14 @@ class WalletService:
             portfolios[user.user_id] = Portfolio(user.user_id, user)
         return portfolios, portfolios[user.user_id]
 
-    def show_portfolio(self, base_currency: str = "USD") -> dict:
+    def show_portfolio(self, base_currency: str | None = None) -> dict:
+        with self.storage.operation():
+            return self._show_portfolio(base_currency)
+
+    def _show_portfolio(self, base_currency: str | None) -> dict:
         _, portfolio = self._load_portfolio()
+        if base_currency is None:
+            base_currency = self.settings.get("DEFAULT_BASE_CURRENCY", "USD")
         base = get_currency(base_currency).code
         wallets = portfolio.wallets
         quotes = {"USD": 1.0}
@@ -100,11 +123,15 @@ class WalletService:
             "total": total,
         }
 
+    @log_action("BUY", verbose=True)
     def buy(self, currency_code: str, amount: float) -> dict:
-        return self._trade("buy", currency_code, amount)
+        with self.storage.operation():
+            return self._trade("buy", currency_code, amount)
 
+    @log_action("SELL", verbose=True)
     def sell(self, currency_code: str, amount: float) -> dict:
-        return self._trade("sell", currency_code, amount)
+        with self.storage.operation():
+            return self._trade("sell", currency_code, amount)
 
     def _trade(self, operation: str, currency_code: str, amount: float) -> dict:
         portfolios, portfolio = self._load_portfolio()
@@ -138,6 +165,10 @@ class WalletService:
         }
 
     def get_rate(self, from_currency: str, to_currency: str) -> dict:
+        with self.storage.operation():
+            return self._get_rate(from_currency, to_currency)
+
+    def _get_rate(self, from_currency: str, to_currency: str) -> dict:
         source = get_currency(from_currency).code
         target = get_currency(to_currency).code
         quote = self.rates.get_rate(source, target)

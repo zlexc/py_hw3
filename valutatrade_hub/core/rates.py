@@ -8,6 +8,8 @@ from valutatrade_hub.core import utils
 from valutatrade_hub.core.currencies import get_currency, supported_codes
 from valutatrade_hub.core.exceptions import ApiRequestError
 from valutatrade_hub.core.storage import JsonStorage
+from valutatrade_hub.infra.database import DatabaseManager
+from valutatrade_hub.infra.settings import DEFAULT_SETTINGS, Settings
 
 
 @dataclass(frozen=True)
@@ -21,16 +23,24 @@ class RateService:
 
     def __init__(
         self,
-        storage: JsonStorage,
+        storage: JsonStorage | DatabaseManager,
         *,
         provider: Callable[[], dict] | None = None,
         clock: Callable[[], datetime] | None = None,
-        ttl: timedelta = timedelta(minutes=5),
+        ttl: timedelta | None = None,
+        settings: Settings | None = None,
     ) -> None:
         self.storage = storage
         self.clock = clock or (lambda: datetime.now(UTC))
         self.provider = provider or self._stub_rates
-        self.ttl = ttl
+        configuration = settings if settings is not None else DEFAULT_SETTINGS
+        self.ttl = (
+            ttl
+            if ttl is not None
+            else timedelta(seconds=configuration.get("RATES_TTL_SECONDS", 300))
+        )
+        if self.ttl <= timedelta(0):
+            raise ValueError("TTL курсов должен быть положительным")
 
     def _stub_rates(self) -> dict:
         timestamp = utils.utc_time(self.clock()).isoformat()
@@ -91,6 +101,10 @@ class RateService:
         return RateQuote(rate, min(source_usd.updated_at, usd_target.updated_at))
 
     def get_rate(self, from_currency: str, to_currency: str) -> RateQuote:
+        with self.storage.operation():
+            return self._get_rate(from_currency, to_currency)
+
+    def _get_rate(self, from_currency: str, to_currency: str) -> RateQuote:
         source = get_currency(from_currency).code
         target = get_currency(to_currency).code
         now = utils.utc_time(self.clock())

@@ -9,8 +9,15 @@ from typing import TextIO
 
 from prettytable import PrettyTable
 
-from valutatrade_hub.core.storage import JsonStorage
+from valutatrade_hub.core.currencies import get_currency, supported_codes
+from valutatrade_hub.core.exceptions import (
+    ApiRequestError,
+    CurrencyNotFoundError,
+    InsufficientFundsError,
+)
 from valutatrade_hub.core.usecases import WalletService
+from valutatrade_hub.infra.settings import SettingsLoader
+from valutatrade_hub.logging_config import setup_logging
 
 
 class CommandParser(argparse.ArgumentParser):
@@ -45,7 +52,9 @@ def build_parser(output: TextIO) -> CommandParser:
         command.add_argument("--username", required=True)
         command.add_argument("--password", required=True)
     command = commands.add_parser("show-portfolio", help="показать портфель")
-    command.add_argument("--base", default="USD")
+    command.add_argument(
+        "--base", default=None, help="база из конфигурации, обычно USD"
+    )
     for name, description in (("buy", "купить валюту"), ("sell", "продать валюту")):
         command = commands.add_parser(name, help=description)
         command.add_argument("--currency", required=True)
@@ -87,6 +96,15 @@ class WalletApplication:
             except (EOFError, KeyboardInterrupt):
                 self._print("\nДо свидания!")
                 return
+            except InsufficientFundsError as error:
+                self._print(str(error))
+            except CurrencyNotFoundError as error:
+                self._print(str(error))
+                self._print(f"Поддерживаемые валюты: {', '.join(supported_codes())}")
+                self._print("Справка: get-rate --help")
+            except ApiRequestError as error:
+                self._print(str(error))
+                self._print("Повторите попытку позже или проверьте подключение к сети.")
             except (ValueError, OSError) as error:
                 self._print(f"Ошибка: {error}")
 
@@ -112,6 +130,9 @@ class WalletApplication:
             case "help":
                 self.parser.print_help(file=self.output)
                 self._print("Подробности команды: <команда> --help")
+                self._print("Поддерживаемые валюты (метаданные демонстрационные):")
+                for code in supported_codes():
+                    self._print(get_currency(code).get_display_info())
             case "register":
                 result = self.service.register(args.username, args.password)
                 self._print(
@@ -128,9 +149,8 @@ class WalletApplication:
                 try:
                     amount = float(args.amount)
                 except (ValueError, OverflowError):
-                    raise ValueError(
-                        "'amount' должен быть положительным числом"
-                    ) from None
+                    # Валидация и журналирование отказа выполняются в usecase.
+                    amount = args.amount
                 operation = (
                     self.service.buy if args.command == "buy" else self.service.sell
                 )
@@ -187,7 +207,9 @@ class WalletApplication:
 def main() -> None:
     """Создать сервисы и запустить интерфейс из любой точки входа."""
     try:
-        service = WalletService(JsonStorage())
+        settings = SettingsLoader()
+        setup_logging(settings)
+        service = WalletService(settings=settings)
     except (ValueError, OSError) as error:
         print(f"Ошибка: {error}", file=sys.stderr)
         raise SystemExit(1) from None

@@ -1,0 +1,11 @@
+{
+  "DATA_DIR": "data",
+  "RATES_TTL_SECONDS": 300,
+  "DEFAULT_BASE_CURRENCY": "USD",
+  "LOG_DIR": "logs",
+  "LOG_FILE": "actions.log",
+  "LOG_FORMAT": "json",
+  "LOG_LEVEL": "INFO",
+  "LOG_MAX_BYTES": 1048576,
+  "LOG_BACKUP_COUNT": 3
+}

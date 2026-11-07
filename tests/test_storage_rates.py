@@ -146,10 +146,15 @@ class RateTests(unittest.TestCase):
         self.cache(BTC_USD=(60000, NOW - timedelta(minutes=10)))
         original = self.storage.load_rates()
         self.provider.side_effect = None
-        self.provider.return_value = {"BTC_USD": {"rate": True, "updated_at": "bad"}}
-        with self.assertRaises(ApiRequestError):
-            self.service.get_rate("BTC", "USD")
-        self.assertEqual(self.storage.load_rates(), original)
+        for payload in (
+            {"BTC_USD": {"rate": True, "updated_at": "bad"}},
+            {123: {"rate": 1, "updated_at": NOW.isoformat()}},
+        ):
+            with self.subTest(payload=payload):
+                self.provider.return_value = payload
+                with self.assertRaises(ApiRequestError):
+                    self.service.get_rate("BTC", "USD")
+                self.assertEqual(self.storage.load_rates(), original)
 
     def test_cached_pair_does_not_register_an_unknown_currency(self):
         self.cache(ABC_USD=(1.0, NOW))

@@ -20,3 +20,9 @@ wheels/
 # Runtime JSON storage
 data/*.json
 data/.*.tmp
+
+# Local configuration and operation logs
+/config.json
+/logs/
+*.log
+*.log.*

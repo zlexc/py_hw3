@@ -282,3 +282,31 @@ class CliTests(ServiceFixture):
         self.assertIn("Ошибка:", output)
         self.assertEqual(target.read_text(), "broken JSON")
         self.assertEqual(json.loads((self.directory / "users.json").read_text()), [])
+
+    def test_typed_errors_offer_specific_guidance_and_session_continues(self):
+        self.service.rates = RateService(
+            self.storage,
+            provider=Mock(side_effect=OSError("offline")),
+            clock=lambda: NOW,
+        )
+        output = self.run_session(
+            [
+                "register --username alice --password 1234",
+                "login --username alice --password 1234",
+                "sell --currency BTC --amount 1",
+                "buy --currency ABC --amount 1",
+                "get-rate --from ABC --to USD",
+                "get-rate --from BTC --to USD",
+                "help",
+            ]
+        )
+        self.assertIn("Недостаточно средств: доступно 0.0000 BTC", output)
+        self.assertIn("Неизвестная валюта 'ABC'", output)
+        self.assertIn("Поддерживаемые валюты:", output)
+        self.assertIn("get-rate --help", output)
+        self.assertIn("Ошибка при обращении к внешнему API:", output)
+        self.assertIn("Повторите попытку позже", output)
+        self.assertIn("[FIAT] USD — US Dollar", output)
+        self.assertIn("[CRYPTO] BTC — Bitcoin", output)
+        self.assertNotIn("Traceback", output)
+        self.assertTrue(output.rstrip().endswith("До свидания!"))
