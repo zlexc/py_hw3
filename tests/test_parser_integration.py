@@ -12,10 +12,11 @@ from unittest.mock import Mock, patch
 
 import requests
 
-from tests.helpers import NOW
+from tests.helpers import NOW, make_user
 from tests.test_parser_clients import coin_payload, fiat_payload, response
 from valutatrade_hub.cli.interface import WalletApplication
 from valutatrade_hub.core.exceptions import ApiRequestError, CurrencyNotFoundError
+from valutatrade_hub.core.models import Portfolio, Wallet
 from valutatrade_hub.core.rates import RateService
 from valutatrade_hub.core.storage import JsonStorage, StorageError
 from valutatrade_hub.core.usecases import WalletService
@@ -75,6 +76,41 @@ class ParserIntegrationFixture(unittest.TestCase):
 
 
 class CoreParserTests(ParserIntegrationFixture):
+    def test_portfolio_in_its_own_currency_needs_no_quotes_or_refresh(self):
+        user = make_user()
+        self.storage.save_users([user])
+        self.storage.save_portfolios(
+            {1: Portfolio(1, user, {"BTC": Wallet("BTC", 0.05)})}
+        )
+        self.service.login("alice", "1234")
+        result = self.service.show_portfolio("BTC")
+        self.assertEqual(result["total"], 0.05)
+        self.assertEqual(result["wallets"][0]["value"], 0.05)
+        self.http.get.assert_not_called()
+
+    def test_portfolio_uses_direct_or_inverse_base_quotes_without_usd(self):
+        user = make_user()
+        self.storage.save_users([user])
+        self.storage.save_portfolios(
+            {1: Portfolio(1, user, {"BTC": Wallet("BTC", 0.05)})}
+        )
+        self.service.login("alice", "1234")
+        for pair, rate in (("BTC_EUR", 50000), ("EUR_BTC", 1 / 50000)):
+            with self.subTest(pair=pair):
+                self.storage.save_rates(
+                    {
+                        pair: {
+                            "rate": rate,
+                            "updated_at": NOW.isoformat(),
+                            "source": "Regression",
+                        }
+                    }
+                )
+                result = self.service.show_portfolio("EUR")
+                self.assertEqual(result["total"], 2500)
+                self.assertEqual(result["wallets"][0]["value"], 2500)
+        self.http.get.assert_not_called()
+
     def test_auto_refresh_requests_only_needed_sources_and_fresh_cache_avoids_requests(
         self,
     ):

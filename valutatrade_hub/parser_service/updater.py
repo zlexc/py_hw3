@@ -22,6 +22,8 @@ from valutatrade_hub.parser_service.storage import ParserStorage
 
 @dataclass(frozen=True)
 class UpdateResult:
+    """Число изменений, новые измерения, ошибки источников и время обновления."""
+
     changed_pairs: int
     history_added: int
     failed_sources: dict[str, str]
@@ -29,6 +31,8 @@ class UpdateResult:
 
 
 class RatesUpdater:
+    """Независимый опрос API и публикация успешных данных без потери других пар."""
+
     def __init__(
         self,
         clients: list[BaseApiClient],
@@ -52,6 +56,7 @@ class RatesUpdater:
     def run_update(
         self, source: str | None = None, *, sources: set[str] | None = None
     ) -> UpdateResult:
+        """Обновить курсы, сохранив успехи при частичном отказе."""
         selected = sources if sources is not None else ({source} if source else None)
         clients = [
             client
@@ -160,10 +165,12 @@ class RatesUpdater:
         return UpdateResult(changed, added, failures, last_refresh)
 
     def refresh(self, sources: set[str]) -> UpdateResult:
+        """Обновить только источники, необходимые Core для недостающих котировок."""
         return self.run_update(sources=sources)
 
 
 def build_updater(config: ParserConfig, *, session=None, clock=None) -> RatesUpdater:
+    """Собрать включённые API-клиенты и хранилище с передаваемыми HTTP и часами."""
     clients = []
     if config.crypto_currencies:
         clients.append(CoinGeckoClient(config, session=session, clock=clock))

@@ -28,6 +28,7 @@ class CommandParser(argparse.ArgumentParser):
         super().__init__(*args, **kwargs)
 
     def error(self, message: str) -> None:
+        """Преобразовать ошибку argparse в безопасное сообщение без завершения REPL."""
         raise ValueError("Некорректные аргументы команды. Выполните help.")
 
     def _print_message(self, message, file=None) -> None:
@@ -36,6 +37,7 @@ class CommandParser(argparse.ArgumentParser):
 
 
 def build_parser(output: TextIO) -> CommandParser:
+    """Создать обработчик аргументов всех интерактивных команд кошелька."""
     parser = CommandParser(
         prog="", description="Команды валютного кошелька", output=output
     )
@@ -92,6 +94,7 @@ class WalletApplication:
         print(message, file=self.output)
 
     def run(self) -> None:
+        """Обрабатывать команды до exit, EOF или Ctrl+C, сохраняя сессию при ошибках."""
         self._print("ValutaTrade Hub — валютный кошелёк. Справка: help. Выход: exit.")
         while True:
             try:
@@ -116,6 +119,7 @@ class WalletApplication:
                 self._print(f"Ошибка: {error}")
 
     def handle_line(self, line: str) -> bool:
+        """Разобрать одну команду и вызвать usecase; False означает команду exit."""
         try:
             arguments = shlex.split(line)
         except ValueError:

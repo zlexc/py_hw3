@@ -6,7 +6,7 @@ from datetime import UTC, datetime, timedelta
 
 from valutatrade_hub.core import utils
 from valutatrade_hub.core.currencies import (
-    CryptoCurrency,
+    currency_source,
     get_currency,
     supported_codes,
 )
@@ -18,6 +18,8 @@ from valutatrade_hub.infra.settings import DEFAULT_SETTINGS, Settings
 
 @dataclass(frozen=True)
 class RateQuote:
+    """Курс одной единицы валюты, время его получения и источник."""
+
     rate: float
     updated_at: datetime
     source: str = ""
@@ -52,9 +54,11 @@ class RateService:
 
     @property
     def supported_currencies(self) -> set[str]:
+        """Вернуть независимое множество кодов из реестра валют."""
         return set(supported_codes())
 
     def is_fresh(self, timestamp: datetime) -> bool:
+        """Проверить возраст котировки по TTL; будущая дата считается несвежей."""
         age = utils.utc_time(self.clock()) - timestamp
         return timedelta(0) <= age < self.ttl
 
@@ -88,6 +92,7 @@ class RateService:
         snapshot: dict | None = None,
         allow_stale: bool = False,
     ) -> RateQuote | None:
+        """Найти прямой, обратный или USD-кросс-курс без обращения к провайдеру."""
         source, target = get_currency(source).code, get_currency(target).code
         data = snapshot if snapshot is not None else self.storage.load_rates()
         pairs = data["pairs"]
@@ -114,24 +119,16 @@ class RateService:
         for code in (source, target):
             if code == "USD" or self.cached_rate(code, "USD", snapshot=snapshot):
                 continue
-            kind = (
-                "coingecko"
-                if isinstance(get_currency(code), CryptoCurrency)
-                else "exchangerate"
-            )
-            result.add(kind)
+            result.add(currency_source(code))
         # Например, в кеше есть только устаревшая прямая кросс-пара.
         if not result:
             result = {
-                "coingecko"
-                if isinstance(get_currency(code), CryptoCurrency)
-                else "exchangerate"
-                for code in (source, target)
-                if code != "USD"
+                currency_source(code) for code in (source, target) if code != "USD"
             }
         return result
 
     def get_rate(self, from_currency: str, to_currency: str) -> RateQuote:
+        """Вернуть свежий курс или ApiRequestError после попытки обновления."""
         with self.storage.operation():
             source, target = (
                 get_currency(from_currency).code,

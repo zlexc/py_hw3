@@ -17,6 +17,7 @@ class StorageError(ValueError):
 
 
 def read_json(path: Path, default):
+    """Прочитать UTF-8 JSON; отсутствие даёт default, повреждение — StorageError."""
     try:
         with path.open(encoding="utf-8") as stream:
             return json.load(stream)
@@ -27,6 +28,7 @@ def read_json(path: Path, default):
 
 
 def write_json(path: Path, data) -> None:
+    """Записать UTF-8 JSON через временный файл и атомарную замену назначения."""
     temporary = None
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -143,6 +145,7 @@ class JsonStorage:
         write_json(self.data_dir / filename, data)
 
     def load_users(self) -> list[User]:
+        """Прочитать и проверить пользователей, уникальность имён и идентификаторов."""
         data = self._read("users.json", [])
         try:
             if not isinstance(data, list):
@@ -169,6 +172,7 @@ class JsonStorage:
             raise StorageError(f"Некорректная структура users.json: {error}") from error
 
     def save_users(self, users: list[User]) -> None:
+        """Атомарно сохранить пользователей с хешами, солью и ISO-датами."""
         self._write(
             "users.json",
             [
@@ -182,6 +186,7 @@ class JsonStorage:
         )
 
     def load_portfolios(self, users: list[User]) -> dict[int, Portfolio]:
+        """Восстановить портфели и проверить владельцев и балансы кошельков."""
         data = self._read("portfolios.json", [])
         try:
             if not isinstance(data, list):
@@ -209,6 +214,7 @@ class JsonStorage:
             ) from error
 
     def save_portfolios(self, portfolios: dict[int, Portfolio]) -> None:
+        """Атомарно сохранить словарь портфелей в принятом JSON-формате."""
         self._write(
             "portfolios.json",
             [
@@ -225,9 +231,11 @@ class JsonStorage:
 
     @staticmethod
     def validate_rates(data: dict) -> None:
+        """Проверить структуру и значения котировок нового или плоского кеша."""
         normalize_rates(data)
 
     def load_rates(self) -> dict:
+        """Прочитать кеш и вернуть канонический снимок с pairs и last_refresh."""
         data = self._read("rates.json", {})
         try:
             return normalize_rates(data)
@@ -235,6 +243,7 @@ class JsonStorage:
             raise StorageError(f"Некорректная структура rates.json: {error}") from error
 
     def save_rates(self, data: dict) -> None:
+        """Проверить и сохранить канонический кеш под файловой блокировкой."""
         try:
             data = normalize_rates(data)
         except (KeyError, TypeError, ValueError) as error:

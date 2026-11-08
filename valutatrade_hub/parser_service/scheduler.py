@@ -21,9 +21,8 @@ def run_scheduler(
     wait=None,
     report=print,
 ) -> int:
-    interval = utils.number(interval, positive=True)
-    if interval > 86400 * 365:
-        raise ValueError("Интервал не должен превышать один год")
+    """Выполнить обновление один раз или последовательно до сигнала остановки."""
+    interval = utils.positive_interval(interval, "Интервал")
     waiter = wait if wait is not None else Event().wait
     while True:
         try:
@@ -47,6 +46,7 @@ def run_scheduler(
 
 
 def main(argv=None) -> int:
+    """Разобрать аргументы Parser Service и вернуть код результата или остановки."""
     parser = argparse.ArgumentParser(description="Parser Service: обновление курсов")
     parser.add_argument("--source", choices=("coingecko", "exchangerate"))
     parser.add_argument("--watch", action="store_true", help="повторять до Ctrl+C")
@@ -60,9 +60,7 @@ def main(argv=None) -> int:
         interval = (
             config.update_interval_seconds if args.interval is None else args.interval
         )
-        interval = utils.number(interval, positive=True)
-        if interval > 86400 * 365:
-            raise ValueError("Интервал не должен превышать один год")
+        interval = utils.positive_interval(interval, "Интервал")
         setup_parser_logging(settings)
         return run_scheduler(
             build_updater(config),

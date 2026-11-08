@@ -1,6 +1,6 @@
 UV ?= uv
 
-.PHONY: install run lint format format-check test check build
+.PHONY: install run lint format format-check test check build demo
 
 install:
 	$(UV) sync --locked
@@ -24,3 +24,6 @@ check: lint format-check test
 
 build:
 	$(UV) build
+
+demo:
+	$(UV) run --locked python scripts/record_demo.py

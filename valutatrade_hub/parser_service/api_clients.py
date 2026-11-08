@@ -15,18 +15,22 @@ from valutatrade_hub.parser_service.config import ParserConfig
 
 
 def iso_utc(value: datetime) -> str:
+    """Сформировать UTC ISO-дату с микросекундами и суффиксом Z."""
     return (
         utils.utc_time(value).isoformat(timespec="microseconds").replace("+00:00", "Z")
     )
 
 
 def provider_time(value) -> str:
+    """Преобразовать Unix-время или HTTP-дату провайдера в UTC ISO-строку."""
     if isinstance(value, str):
         return iso_utc(parsedate_to_datetime(value))
     return iso_utc(datetime.fromtimestamp(utils.number(value, positive=True), UTC))
 
 
 class BaseApiClient(ABC):
+    """Контракт клиента: все настроенные курсы или безопасный ApiRequestError."""
+
     source: str
     source_key: str
 
@@ -92,10 +96,13 @@ class BaseApiClient(ABC):
 
 
 class CoinGeckoClient(BaseApiClient):
+    """Пакетное получение цен криптовалют в USD по CoinGecko ID."""
+
     source = "CoinGecko"
     source_key = "coingecko"
 
     def fetch_rates(self) -> dict[str, float]:
+        """Получить все курсы; неполный ответ — ApiRequestError."""
         self.last_fetch = {}
         headers = {}
         if self.config.coingecko_api_key:
@@ -134,10 +141,13 @@ class CoinGeckoClient(BaseApiClient):
 
 
 class ExchangeRateApiClient(BaseApiClient):
+    """Получение фиатных котировок с инверсией USD-курсов в валюту→USD."""
+
     source = "ExchangeRate-API"
     source_key = "exchangerate"
 
     def fetch_rates(self) -> dict[str, float]:
+        """Получить все курсы; неполный ответ — ApiRequestError."""
         self.last_fetch = {}
         if not self.config.exchangerate_api_key:
             raise ApiRequestError(

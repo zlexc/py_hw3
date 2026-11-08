@@ -30,26 +30,32 @@ class User:
 
     @property
     def user_id(self) -> int:
+        """Вернуть идентификатор владельца без возможности перезаписи."""
         return self._user_id
 
     @property
     def username(self) -> str:
+        """Вернуть имя пользователя с сохранением регистра."""
         return self._username
 
     @username.setter
     def username(self, value: str) -> None:
+        """Проверить непустое имя, убрать внешние пробелы и сохранить регистр."""
         self._username = utils.username(value)
 
     @property
     def hashed_password(self) -> str:
+        """Вернуть сохранённый SHA-256 хеш для сериализации и проверки."""
         return self._hashed_password
 
     @property
     def salt(self) -> str:
+        """Вернуть индивидуальную соль пользователя для сериализации."""
         return self._salt
 
     @property
     def registration_date(self) -> datetime:
+        """Вернуть дату регистрации с часовым поясом UTC."""
         return self._registration_date
 
     def get_user_info(self) -> dict:
@@ -61,6 +67,7 @@ class User:
         }
 
     def change_password(self, new_password: str) -> None:
+        """Заменить хеш пароля после проверки минимальной длины в 4 символа."""
         if not isinstance(new_password, str) or len(new_password) < 4:
             raise ValueError("Пароль должен быть не короче 4 символов")
         self._hashed_password = hashlib.sha256(
@@ -68,6 +75,7 @@ class User:
         ).hexdigest()
 
     def verify_password(self, password: str) -> bool:
+        """Сравнить хеш введённого пароля с сохранённым за постоянное время."""
         if not isinstance(password, str):
             return False
         candidate = hashlib.sha256((password + self.salt).encode("utf-8")).hexdigest()
@@ -83,26 +91,32 @@ class Wallet:
 
     @property
     def currency_code(self) -> str:
+        """Вернуть нормализованный код валюты кошелька."""
         return self._currency_code
 
     @property
     def balance(self) -> float:
+        """Вернуть текущий баланс без округления."""
         return self._balance
 
     @balance.setter
     def balance(self, value: float) -> None:
+        """Принять конечное неотрицательное число; bool и другие типы отклонить."""
         self._balance = utils.number(value)
 
     def deposit(self, amount: float) -> None:
+        """Добавить положительную конечную сумму; при ошибке сохранить баланс."""
         self.balance = self.balance + utils.number(amount, positive=True)
 
     def withdraw(self, amount: float) -> None:
+        """Снять сумму; при нехватке вызвать InsufficientFundsError без изменений."""
         amount = utils.number(amount, positive=True)
         if amount > self.balance:
             raise InsufficientFundsError(self.balance, amount, self.currency_code)
         self.balance = self.balance - amount
 
     def get_balance_info(self) -> dict:
+        """Вернуть словарь с кодом валюты и балансом для представления."""
         return {"currency_code": self.currency_code, "balance": self.balance}
 
 
@@ -129,17 +143,21 @@ class Portfolio:
 
     @property
     def user_id(self) -> int:
+        """Вернуть идентификатор владельца без возможности перезаписи."""
         return self._user_id
 
     @property
     def user(self) -> User:
+        """Вернуть владельца портфеля без возможности заменить его свойством."""
         return self._user
 
     @property
     def wallets(self) -> dict[str, Wallet]:
+        """Вернуть поверхностную копию словаря с теми же объектами Wallet."""
         return self._wallets.copy()
 
     def add_currency(self, currency_code: str) -> Wallet:
+        """Создать пустой кошелёк, отклонив повторяющийся код валюты."""
         code = utils.currency_code(currency_code)
         if code in self._wallets:
             raise ValueError(f"Кошелёк '{code}' уже существует")
@@ -148,6 +166,7 @@ class Portfolio:
         return wallet
 
     def get_wallet(self, currency_code: str) -> Wallet:
+        """Вернуть кошелёк по нормализованному коду или сообщить об отсутствии."""
         code = utils.currency_code(currency_code)
         if code not in self._wallets:
             raise ValueError(
@@ -159,6 +178,12 @@ class Portfolio:
     def get_total_value(
         self, base_currency: str = "USD", *, exchange_rates: dict | None = None
     ) -> float:
+        """Вернуть стоимость в base_currency без чтения файлов или сети.
+
+        exchange_rates задаёт цены единиц валют в одной общей единице измерения.
+        Без переданных котировок используются демонстрационные цены в USD.
+        Отсутствующие валюты или некорректные котировки вызывают ValueError.
+        """
         rates = utils.DEFAULT_USD_RATES if exchange_rates is None else exchange_rates
         base = utils.currency_code(base_currency)
         if base not in rates:

@@ -4,7 +4,9 @@ import hashlib
 import unittest
 
 from tests.helpers import NOW, make_user
+from valutatrade_hub.core.currencies import supported_codes
 from valutatrade_hub.core.models import Portfolio, User, Wallet
+from valutatrade_hub.core.utils import DEFAULT_USD_RATES
 
 
 class UserTests(unittest.TestCase):
@@ -95,6 +97,15 @@ class WalletTests(unittest.TestCase):
 
 
 class PortfolioTests(unittest.TestCase):
+    def test_default_valuation_covers_all_registered_currencies(self):
+        self.assertEqual(set(DEFAULT_USD_RATES), set(supported_codes()))
+        for code in supported_codes():
+            with self.subTest(code=code):
+                portfolio = Portfolio(1, make_user())
+                portfolio.add_currency(code).deposit(1)
+                self.assertEqual(portfolio.get_total_value(), DEFAULT_USD_RATES[code])
+                self.assertEqual(portfolio.get_total_value(code), 1)
+
     def test_owner_and_wallet_dictionary_protection(self):
         user = make_user()
         original = {"USD": Wallet("USD", 10)}

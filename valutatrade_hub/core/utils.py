@@ -7,10 +7,25 @@ from datetime import UTC, datetime
 DEFAULT_USD_RATES = {
     "USD": 1.0,
     "EUR": 1.0786,
+    "GBP": 1.25,
     "BTC": 59337.21,
     "RUB": 0.01016,
     "ETH": 3720.0,
+    "SOL": 145.12,
 }
+
+MAX_INTERVAL_SECONDS = 365 * 24 * 60 * 60
+
+
+def positive_interval(value: float, label: str) -> float:
+    """Проверить конечный положительный интервал не длиннее одного года."""
+    try:
+        result = number(value, positive=True)
+    except ValueError:
+        raise ValueError(f"{label} должен быть положительным конечным числом") from None
+    if result > MAX_INTERVAL_SECONDS:
+        raise ValueError(f"{label} не должен превышать один год")
+    return result
 
 
 def currency_code(value: str) -> str:
@@ -24,6 +39,7 @@ def currency_code(value: str) -> str:
 
 
 def nonempty_text(value: str, label: str) -> str:
+    """Проверить непустой текст и удалить внешние пробелы."""
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{label} не может быть пустым")
     return value.strip()

@@ -14,10 +14,13 @@ from valutatrade_hub.parser_service.api_clients import iso_utc
 
 
 class ParserStorage:
+    """Валидированная история и последний снимок с общим файловым lock."""
+
     def __init__(self, data_dir: Path | str) -> None:
         self.data_dir = Path(data_dir)
 
     def load_cache(self) -> dict:
+        """Прочитать последний снимок без создания отсутствующего файла."""
         try:
             return normalize_rates(read_json(self.data_dir / "rates.json", {}))
         except (KeyError, ValueError, TypeError) as error:
@@ -26,6 +29,7 @@ class ParserStorage:
             raise StorageError("Некорректная структура rates.json") from error
 
     def load_history(self) -> list[dict]:
+        """Прочитать историю и проверить структуру и уникальность идентификаторов."""
         history = read_json(self.data_dir / "exchange_rates.json", [])
         try:
             if not isinstance(history, list):
@@ -42,6 +46,7 @@ class ParserStorage:
 
     @staticmethod
     def validate_measurement(entry: dict) -> None:
+        """Проверить коды валют, курс, источник и согласованность ID со временем."""
         if not isinstance(entry, dict):
             raise ValueError("измерение должно быть объектом")
         for key in ("from_currency", "to_currency"):
@@ -63,6 +68,7 @@ class ParserStorage:
     def commit(
         self, measurements: list[dict], completed_at
     ) -> tuple[int, int, str | None]:
+        """Под lock добавить историю и новые пары; вернуть counts и last_refresh."""
         for entry in measurements:
             self.validate_measurement(entry)
         with rates_lock(self.data_dir):

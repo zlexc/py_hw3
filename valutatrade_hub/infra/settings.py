@@ -34,6 +34,7 @@ class SettingsLoader:
     _instance_lock = Lock()
 
     def __new__(cls, config_path: str | Path | None = None):
+        """Один раз загрузить настройки и вернуть общий экземпляр процесса."""
         # __new__ проще метакласса; и создание, и загрузка защищены одним lock.
         with cls._instance_lock:
             if cls._instance is None:

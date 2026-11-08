@@ -6,6 +6,8 @@ class DomainError(ValueError):
 
 
 class InsufficientFundsError(DomainError):
+    """Доступный баланс меньше запрошенной суммы снятия."""
+
     def __init__(self, available: float, required: float, code: str) -> None:
         self.available = available
         self.required = required
@@ -17,12 +19,16 @@ class InsufficientFundsError(DomainError):
 
 
 class CurrencyNotFoundError(DomainError):
+    """Код корректен по формату, но отсутствует в реестре валют."""
+
     def __init__(self, code: str) -> None:
         self.code = code
         super().__init__(f"Неизвестная валюта '{code}'")
 
 
 class ApiRequestError(DomainError):
+    """Безопасное сообщение о недоступности или неверном ответе API."""
+
     def __init__(self, reason: str) -> None:
         self.reason = reason
         super().__init__(f"Ошибка при обращении к внешнему API: {reason}")

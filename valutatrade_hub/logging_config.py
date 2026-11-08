@@ -31,6 +31,7 @@ class JsonActionFormatter(logging.Formatter):
     """Только разрешённые поля; полный LogRecord никогда не сериализуется."""
 
     def format(self, record: logging.LogRecord) -> str:
+        """Вернуть JSON-строку только с разрешёнными полями записи журнала."""
         action = getattr(record, "action_data", {})
         data = {
             "timestamp": datetime.fromtimestamp(record.created, UTC).isoformat(),
@@ -44,13 +45,19 @@ class JsonActionFormatter(logging.Formatter):
 
 
 class ActionFileHandler(RotatingFileHandler):
+    """Файловый журнал, сбой которого не отменяет сохранённую операцию."""
+
     def handleError(self, record: logging.LogRecord) -> None:
         # Сбой журнала не отменяет уже сохранённую сделку и не раскрывает traceback.
+        """Сообщить о сбое записи без traceback и содержимого доменных объектов."""
         print("Не удалось записать журнал действий.", file=sys.stderr)
 
 
 class JsonParserFormatter(logging.Formatter):
+    """Форматирование разрешённых полей событий парсера в JSON Lines."""
+
     def format(self, record: logging.LogRecord) -> str:
+        """Вернуть JSON-строку только с разрешёнными полями записи журнала."""
         context = getattr(record, "parser_data", {})
         return json.dumps(
             {
@@ -87,6 +94,7 @@ def setup_logging(settings: Settings | None = None) -> logging.Logger:
 
 
 def setup_parser_logging(settings: Settings | None = None) -> logging.Logger:
+    """Настроить отдельный ротируемый parser.log без дублирования обработчиков."""
     configuration = settings if settings is not None else SettingsLoader()
     return _setup_file_logger(
         configuration, PARSER_LOGGER_NAME, "parser.log", JsonParserFormatter()

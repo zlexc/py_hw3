@@ -55,6 +55,7 @@ class WalletService:
         self.current_user: User | None = None
 
     def register(self, username: str, password: str) -> dict:
+        """Сохранить пользователя с солью и пустой портфель, не открывая сессию."""
         with self.storage.operation():
             return self._register(username, password)
 
@@ -82,6 +83,7 @@ class WalletService:
         return user.get_user_info()
 
     def login(self, username: str, password: str) -> dict:
+        """Проверить пароль и заменить сессию только после успешного входа."""
         with self.storage.operation():
             return self._login(username, password)
 
@@ -111,6 +113,7 @@ class WalletService:
         return portfolios, portfolios[user.user_id]
 
     def show_portfolio(self, base_currency: str | None = None) -> dict:
+        """Вернуть балансы, стоимость кошельков и итог в выбранной базовой валюте."""
         with self.storage.operation():
             return self._show_portfolio(base_currency)
 
@@ -120,13 +123,11 @@ class WalletService:
             base_currency = self.settings.get("DEFAULT_BASE_CURRENCY", "USD")
         base = get_currency(base_currency).code
         wallets = portfolio.wallets
-        quotes = {"USD": 1.0}
-        if wallets:
-            for code in {base, *wallets}:
-                quotes[code] = self.rates.get_rate(code, "USD").rate
-        total = (
-            portfolio.get_total_value(base, exchange_rates=quotes) if wallets else 0.0
-        )
+        # Все котировки имеют одну единицу измерения — выбранную базовую валюту.
+        quotes = {base: 1.0}
+        for code in sorted(wallets):
+            quotes[code] = self.rates.get_rate(code, base).rate
+        total = portfolio.get_total_value(base, exchange_rates=quotes)
         return {
             "username": portfolio.user.username,
             "base_currency": base,
@@ -134,7 +135,7 @@ class WalletService:
                 {
                     "currency_code": code,
                     "balance": wallet.balance,
-                    "value": wallet.balance * (quotes[code] / quotes[base]),
+                    "value": wallet.balance * quotes[code],
                 }
                 for code, wallet in sorted(wallets.items())
             ],
@@ -143,11 +144,13 @@ class WalletService:
 
     @log_action("BUY", verbose=True)
     def buy(self, currency_code: str, amount: float) -> dict:
+        """Купить валюту текущего пользователя и записать результат после сохранения."""
         with self.storage.operation():
             return self._trade("buy", currency_code, amount)
 
     @log_action("SELL", verbose=True)
     def sell(self, currency_code: str, amount: float) -> dict:
+        """Продать валюту и записать результат после сохранения."""
         with self.storage.operation():
             return self._trade("sell", currency_code, amount)
 
@@ -183,6 +186,7 @@ class WalletService:
         }
 
     def get_rate(self, from_currency: str, to_currency: str) -> dict:
+        """Вернуть свежий курс или ApiRequestError после попытки обновления."""
         with self.storage.operation():
             return self._get_rate(from_currency, to_currency)
 
@@ -203,11 +207,13 @@ class WalletService:
         }
 
     def update_rates(self, source: str | None = None):
+        """Обновить все или один источник через Parser Service без требования входа."""
         if self.updater is None:
             raise ApiRequestError("Parser Service не настроен")
         return self.updater.run_update(source)
 
     def show_rates(self, currency=None, top=None, base_currency=None) -> dict:
+        """Вернуть отфильтрованные курсы из кеша без сетевого обновления."""
         if top is not None and (
             isinstance(top, bool) or not isinstance(top, int) or top <= 0
         ):

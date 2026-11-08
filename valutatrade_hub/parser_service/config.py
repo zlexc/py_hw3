@@ -37,6 +37,8 @@ def local_secrets(path: Path) -> dict[str, str]:
 
 @dataclass(frozen=True)
 class ParserConfig:
+    """Проверенные параметры API, путей и расписания; ключи скрыты из repr."""
+
     data_dir: Path = field(default_factory=lambda: Path("data").resolve())
     base_currency: str = "USD"
     fiat_currencies: tuple[str, ...] = ("EUR", "GBP", "RUB")
@@ -80,13 +82,9 @@ class ParserConfig:
             raise ValueError("CoinGecko ID не должны повторяться")
         object.__setattr__(self, "crypto_id_map", mapping)
         for name in ("request_timeout", "update_interval_seconds"):
-            try:
-                value = utils.number(getattr(self, name), positive=True)
-            except ValueError:
-                raise ValueError(f"{name} должен быть положительным числом") from None
-            if value > 86400 * 365:
-                raise ValueError(f"{name} не должен превышать один год")
-            object.__setattr__(self, name, value)
+            object.__setattr__(
+                self, name, utils.positive_interval(getattr(self, name), name)
+            )
         for name in ("coingecko_url", "exchangerate_api_url"):
             value = getattr(self, name)
             if not isinstance(value, str):
@@ -107,14 +105,17 @@ class ParserConfig:
 
     @property
     def rates_file_path(self) -> Path:
+        """Вернуть путь снимка, который читает Core Service."""
         return self.data_dir / "rates.json"
 
     @property
     def history_file_path(self) -> Path:
+        """Вернуть путь JSON-истории измерений Parser Service."""
         return self.data_dir / "exchange_rates.json"
 
     @classmethod
     def from_settings(cls, settings: Settings, *, env_path: Path | None = None):
+        """Загрузить PARSER и ключи из .env; переменные окружения имеют приоритет."""
         values = settings.get("PARSER", {})
         if not isinstance(values, dict):
             raise ValueError("PARSER должен быть JSON-объектом")
