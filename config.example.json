@@ -7,5 +7,19 @@
   "LOG_FORMAT": "json",
   "LOG_LEVEL": "INFO",
   "LOG_MAX_BYTES": 1048576,
-  "LOG_BACKUP_COUNT": 3
+  "LOG_BACKUP_COUNT": 3,
+  "PARSER": {
+    "BASE_CURRENCY": "USD",
+    "FIAT_CURRENCIES": ["EUR", "GBP", "RUB"],
+    "CRYPTO_CURRENCIES": ["BTC", "ETH", "SOL"],
+    "CRYPTO_ID_MAP": {
+      "BTC": "bitcoin",
+      "ETH": "ethereum",
+      "SOL": "solana"
+    },
+    "COINGECKO_URL": "https://api.coingecko.com/api/v3/simple/price",
+    "EXCHANGERATE_API_URL": "https://v6.exchangerate-api.com/v6",
+    "REQUEST_TIMEOUT": 10,
+    "UPDATE_INTERVAL_SECONDS": 3600
+  }
 }
