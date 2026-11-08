@@ -7,10 +7,12 @@ authors = [{ name = "Fyodor Simonov" }]
 requires-python = ">=3.12"
 dependencies = [
     "prettytable>=3.18.0",
+    "requests>=2.34.2",
 ]
 
 [project.scripts]
 wallet = "valutatrade_hub.cli.interface:main"
+rates-parser = "valutatrade_hub.parser_service.scheduler:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -11,6 +11,7 @@ from threading import Lock
 from valutatrade_hub.infra.settings import Settings, SettingsLoader
 
 ACTION_LOGGER_NAME = "valutatrade_hub.actions"
+PARSER_LOGGER_NAME = "valutatrade_hub.parser"
 _SETUP_LOCK = Lock()
 _FIELDS = (
     "action",
@@ -48,15 +49,57 @@ class ActionFileHandler(RotatingFileHandler):
         print("Не удалось записать журнал действий.", file=sys.stderr)
 
 
+class JsonParserFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        context = getattr(record, "parser_data", {})
+        return json.dumps(
+            {
+                "timestamp": datetime.fromtimestamp(record.created, UTC).isoformat(),
+                "level": record.levelname,
+                **{
+                    key: context.get(key)
+                    for key in (
+                        "event",
+                        "source",
+                        "rates_count",
+                        "history_added",
+                        "duration_ms",
+                        "result",
+                        "error_type",
+                        "error_message",
+                    )
+                },
+            },
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+
+
 def setup_logging(settings: Settings | None = None) -> logging.Logger:
     """Настроить один файловый handler; повторный вызов не дублирует записи."""
     configuration = settings if settings is not None else SettingsLoader()
+    return _setup_file_logger(
+        configuration,
+        ACTION_LOGGER_NAME,
+        configuration.get("LOG_FILE", "actions.log"),
+        JsonActionFormatter(),
+    )
+
+
+def setup_parser_logging(settings: Settings | None = None) -> logging.Logger:
+    configuration = settings if settings is not None else SettingsLoader()
+    return _setup_file_logger(
+        configuration, PARSER_LOGGER_NAME, "parser.log", JsonParserFormatter()
+    )
+
+
+def _setup_file_logger(configuration, name, filename, formatter) -> logging.Logger:
     directory = Path(configuration.get("LOG_DIR", "logs"))
-    target = (directory / configuration.get("LOG_FILE", "actions.log")).resolve()
+    target = (directory / filename).resolve()
     max_bytes = configuration.get("LOG_MAX_BYTES", 1048576)
     backups = configuration.get("LOG_BACKUP_COUNT", 3)
     with _SETUP_LOCK:
-        logger = logging.getLogger(ACTION_LOGGER_NAME)
+        logger = logging.getLogger(name)
         logger.setLevel(configuration.get("LOG_LEVEL", "INFO"))
         logger.propagate = False
         if len(logger.handlers) == 1:
@@ -72,7 +115,7 @@ def setup_logging(settings: Settings | None = None) -> logging.Logger:
         handler = ActionFileHandler(
             target, maxBytes=max_bytes, backupCount=backups, encoding="utf-8"
         )
-        handler.setFormatter(JsonActionFormatter())
+        handler.setFormatter(formatter)
         for previous in logger.handlers[:]:
             logger.removeHandler(previous)
             previous.close()

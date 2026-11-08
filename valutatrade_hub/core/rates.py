@@ -1,13 +1,17 @@
-"""Контракт курсов и обновляемый кеш с локальным провайдером-заглушкой."""
+"""Свежие курсы из кеша; внешнее обновление передаётся как зависимость."""
 
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 from valutatrade_hub.core import utils
-from valutatrade_hub.core.currencies import get_currency, supported_codes
+from valutatrade_hub.core.currencies import (
+    CryptoCurrency,
+    get_currency,
+    supported_codes,
+)
 from valutatrade_hub.core.exceptions import ApiRequestError
-from valutatrade_hub.core.storage import JsonStorage
+from valutatrade_hub.core.storage import JsonStorage, normalize_rates
 from valutatrade_hub.infra.database import DatabaseManager
 from valutatrade_hub.infra.settings import DEFAULT_SETTINGS, Settings
 
@@ -16,23 +20,27 @@ from valutatrade_hub.infra.settings import DEFAULT_SETTINGS, Settings
 class RateQuote:
     rate: float
     updated_at: datetime
+    source: str = ""
 
 
 class RateService:
-    """Свежие прямые, обратные и кросс-курсы через USD."""
+    """Прямые/обратные/кросс-курсы с TTL и выборочным обновлением источников."""
 
     def __init__(
         self,
         storage: JsonStorage | DatabaseManager,
         *,
         provider: Callable[[], dict] | None = None,
+        refresher: Callable[[set[str]], object] | None = None,
         clock: Callable[[], datetime] | None = None,
         ttl: timedelta | None = None,
         settings: Settings | None = None,
     ) -> None:
         self.storage = storage
         self.clock = clock or (lambda: datetime.now(UTC))
-        self.provider = provider or self._stub_rates
+        # provider — явно переданные тестовые данные; заглушки по умолчанию нет.
+        self.provider = provider
+        self.refresher = refresher
         configuration = settings if settings is not None else DEFAULT_SETTINGS
         self.ttl = (
             ttl
@@ -42,88 +50,112 @@ class RateService:
         if self.ttl <= timedelta(0):
             raise ValueError("TTL курсов должен быть положительным")
 
-    def _stub_rates(self) -> dict:
-        timestamp = utils.utc_time(self.clock()).isoformat()
-        return {
-            **{
-                f"{code}_USD": {"rate": rate, "updated_at": timestamp}
-                for code, rate in utils.DEFAULT_USD_RATES.items()
-                if code != "USD"
-            },
-            "source": "Stub",
-            "last_refresh": timestamp,
-        }
-
     @property
     def supported_currencies(self) -> set[str]:
         return set(supported_codes())
 
-    def _fresh(self, data: dict, pair: str, now: datetime) -> RateQuote | None:
-        entry = data.get(pair)
+    def is_fresh(self, timestamp: datetime) -> bool:
+        age = utils.utc_time(self.clock()) - timestamp
+        return timedelta(0) <= age < self.ttl
+
+    def _quote(self, pairs, pair, *, allow_stale=False):
+        entry = pairs.get(pair)
         if entry is None:
             return None
         timestamp = utils.parse_time(entry["updated_at"])
-        if timedelta(0) <= now - timestamp < self.ttl:
-            return RateQuote(float(entry["rate"]), timestamp)
-        return None
+        if not allow_stale and not self.is_fresh(timestamp):
+            return None
+        return RateQuote(entry["rate"], timestamp, entry["source"])
 
-    def _direct(
-        self, data: dict, source: str, target: str, now: datetime
-    ) -> RateQuote | None:
-        direct = self._fresh(data, f"{source}_{target}", now)
+    def _direct(self, pairs, source, target, *, allow_stale=False):
+        direct = self._quote(pairs, f"{source}_{target}", allow_stale=allow_stale)
         if direct is not None:
             return direct
-        inverse = self._fresh(data, f"{target}_{source}", now)
+        inverse = self._quote(pairs, f"{target}_{source}", allow_stale=allow_stale)
         if inverse is not None:
             try:
                 rate = utils.number(1 / inverse.rate, positive=True)
-            except (ValueError, OverflowError):
+            except ValueError:
                 return None
-            return RateQuote(rate, inverse.updated_at)
+            return RateQuote(rate, inverse.updated_at, inverse.source)
         return None
 
-    def _find(
-        self, data: dict, source: str, target: str, now: datetime
+    def cached_rate(
+        self,
+        source: str,
+        target: str,
+        *,
+        snapshot: dict | None = None,
+        allow_stale: bool = False,
     ) -> RateQuote | None:
-        direct = self._direct(data, source, target, now)
+        source, target = get_currency(source).code, get_currency(target).code
+        data = snapshot if snapshot is not None else self.storage.load_rates()
+        pairs = data["pairs"]
+        if source == target:
+            return RateQuote(1.0, utils.utc_time(self.clock()), "Identity")
+        direct = self._direct(pairs, source, target, allow_stale=allow_stale)
         if direct is not None:
             return direct
         if "USD" in (source, target):
             return None
-        source_usd = self._direct(data, source, "USD", now)
-        usd_target = self._direct(data, "USD", target, now)
-        if source_usd is None or usd_target is None:
+        first = self._direct(pairs, source, "USD", allow_stale=allow_stale)
+        second = self._direct(pairs, "USD", target, allow_stale=allow_stale)
+        if first is None or second is None:
             return None
         try:
-            rate = utils.number(source_usd.rate * usd_target.rate, positive=True)
+            rate = utils.number(first.rate * second.rate, positive=True)
         except ValueError:
             return None
-        return RateQuote(rate, min(source_usd.updated_at, usd_target.updated_at))
+        origin = " + ".join(sorted({first.source, second.source}))
+        return RateQuote(rate, min(first.updated_at, second.updated_at), origin)
+
+    def _needed_sources(self, source, target, snapshot):
+        result = set()
+        for code in (source, target):
+            if code == "USD" or self.cached_rate(code, "USD", snapshot=snapshot):
+                continue
+            kind = (
+                "coingecko"
+                if isinstance(get_currency(code), CryptoCurrency)
+                else "exchangerate"
+            )
+            result.add(kind)
+        # Например, в кеше есть только устаревшая прямая кросс-пара.
+        if not result:
+            result = {
+                "coingecko"
+                if isinstance(get_currency(code), CryptoCurrency)
+                else "exchangerate"
+                for code in (source, target)
+                if code != "USD"
+            }
+        return result
 
     def get_rate(self, from_currency: str, to_currency: str) -> RateQuote:
         with self.storage.operation():
-            return self._get_rate(from_currency, to_currency)
-
-    def _get_rate(self, from_currency: str, to_currency: str) -> RateQuote:
-        source = get_currency(from_currency).code
-        target = get_currency(to_currency).code
-        now = utils.utc_time(self.clock())
-        if source == target:
-            return RateQuote(1.0, now)
-        cached = self.storage.load_rates()
-        quote = self._find(cached, source, target, now)
-        if quote is not None:
+            source, target = (
+                get_currency(from_currency).code,
+                get_currency(to_currency).code,
+            )
+            cached = self.storage.load_rates()
+            quote = self.cached_rate(source, target, snapshot=cached)
+            if quote is not None:
+                return quote
+            message = f"Курс {source}→{target} недоступен"
+            if self.refresher is not None:
+                self.refresher(self._needed_sources(source, target, cached))
+            elif self.provider is not None:
+                try:
+                    refreshed = normalize_rates(self.provider())
+                except (OSError, ValueError, TypeError, KeyError, RuntimeError):
+                    raise ApiRequestError(message) from None
+                quote = self.cached_rate(source, target, snapshot=refreshed)
+                if quote is None:
+                    raise ApiRequestError(message)
+                self.storage.save_rates(refreshed)
+            else:
+                raise ApiRequestError(message + ". Выполните update-rates")
+            quote = self.cached_rate(source, target)
+            if quote is None:
+                raise ApiRequestError(message + ". Выполните update-rates")
             return quote
-        message = f"Курс {source}→{target} недоступен"
-        try:
-            refreshed = self.provider()
-            self.storage.validate_rates(refreshed)
-            # Провайдер мог поставить метку времени позже начала запроса.
-            refreshed_now = utils.utc_time(self.clock())
-            quote = self._find(refreshed, source, target, refreshed_now)
-        except (OSError, ValueError, TypeError, KeyError, RuntimeError) as error:
-            raise ApiRequestError(message) from error
-        if quote is None:
-            raise ApiRequestError(message)
-        self.storage.save_rates(refreshed)
-        return quote

@@ -10,7 +10,7 @@ from datetime import timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from tests.helpers import NOW
+from tests.helpers import NOW, make_rates
 from valutatrade_hub.core.exceptions import ApiRequestError
 from valutatrade_hub.core.rates import RateService
 from valutatrade_hub.core.storage import JsonStorage, StorageError
@@ -112,13 +112,15 @@ import logging
 from pathlib import Path
 from valutatrade_hub.infra.settings import SettingsLoader
 from valutatrade_hub.infra.database import DatabaseManager
-from valutatrade_hub.logging_config import ACTION_LOGGER_NAME
+from valutatrade_hub.logging_config import ACTION_LOGGER_NAME, PARSER_LOGGER_NAME
 for name in ('valutatrade_hub.core.usecases', 'valutatrade_hub.cli.interface',
-             'valutatrade_hub.decorators'):
+             'valutatrade_hub.decorators', 'valutatrade_hub.parser_service.scheduler',
+             'valutatrade_hub.parser_service.api_clients'):
     importlib.import_module(name)
 assert SettingsLoader._instance is None
 assert DatabaseManager._instance is None
 assert not logging.getLogger(ACTION_LOGGER_NAME).handlers
+assert not logging.getLogger(PARSER_LOGGER_NAME).handlers
 assert list(Path.cwd().iterdir()) == []
 """
         result = subprocess.run(
@@ -135,7 +137,11 @@ class DatabaseTests(SingletonFixture):
     def test_manager_is_singleton_and_preserves_data_on_repeated_initialization(self):
         settings = self.configure(DATA_DIR=str(self.directory / "accounts"))
         manager = DatabaseManager(settings)
-        service = WalletService(settings=settings, clock=lambda: NOW)
+        service = WalletService(
+            settings=settings,
+            rates=make_rates(DatabaseManager(settings), settings=settings),
+            clock=lambda: NOW,
+        )
         service.register("alice", "1234")
         self.assertIs(service.storage, manager)
         self.assertIs(DatabaseManager(), manager)
@@ -153,7 +159,11 @@ class DatabaseTests(SingletonFixture):
                 self.assertEqual(manager.load_users(), [])
 
         def register(index):
-            service = WalletService(settings=settings, clock=lambda: NOW)
+            service = WalletService(
+                settings=settings,
+                rates=make_rates(DatabaseManager(settings), settings=settings),
+                clock=lambda: NOW,
+            )
             return service.register(f"user-{index}", "1234")
 
         with ThreadPoolExecutor(max_workers=4) as executor:
@@ -181,7 +191,11 @@ class DatabaseTests(SingletonFixture):
             DEFAULT_BASE_CURRENCY="eur",
             RATES_TTL_SECONDS=60,
         )
-        service = WalletService(settings=settings, clock=lambda: NOW)
+        service = WalletService(
+            settings=settings,
+            rates=make_rates(DatabaseManager(settings), settings=settings),
+            clock=lambda: NOW,
+        )
         service.register("alice", "1234")
         service.login("alice", "1234")
         service.buy("USD", 120)

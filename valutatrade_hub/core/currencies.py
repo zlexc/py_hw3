@@ -91,8 +91,10 @@ _REGISTRY = {
     "USD": partial(FiatCurrency, "US Dollar", "USD", "United States"),
     "EUR": partial(FiatCurrency, "Euro", "EUR", "Eurozone"),
     "RUB": partial(FiatCurrency, "Russian Ruble", "RUB", "Russia"),
+    "GBP": partial(FiatCurrency, "British Pound", "GBP", "United Kingdom"),
     "BTC": partial(CryptoCurrency, "Bitcoin", "BTC", "SHA-256", 1.12e12),
     "ETH": partial(CryptoCurrency, "Ethereum", "ETH", "Ethash", 4.5e11),
+    "SOL": partial(CryptoCurrency, "Solana", "SOL", "Proof of History", 7.0e10),
 }
 
 

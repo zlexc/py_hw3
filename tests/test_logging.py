@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from tests.helpers import NOW, make_user
+from tests.helpers import NOW, make_rates, make_user
 from valutatrade_hub.cli.interface import WalletApplication
 from valutatrade_hub.core.exceptions import (
     ApiRequestError,
@@ -44,7 +44,9 @@ class ActionLoggingTests(unittest.TestCase):
         setup_logging(self.settings)
         self.logfile = self.directory / "logs/actions.log"
         self.storage = JsonStorage(self.directory / "data")
-        self.service = WalletService(self.storage, clock=lambda: NOW)
+        self.service = WalletService(
+            self.storage, rates=make_rates(self.storage), clock=lambda: NOW
+        )
 
     def restore_logger(self):
         for handler in self.logger.handlers[:]:
@@ -141,7 +143,7 @@ class ActionLoggingTests(unittest.TestCase):
         original = (self.storage.data_dir / "portfolios.json").read_bytes()
         with self.assertRaises(ApiRequestError):
             self.service.buy("BTC", 0.05)
-        self.service.rates = RateService(self.storage, clock=lambda: NOW)
+        self.service.rates = make_rates(self.storage)
         error = StorageError("disk full")
         with patch.object(self.storage, "save_portfolios", side_effect=error):
             with self.assertRaises(StorageError) as failure:

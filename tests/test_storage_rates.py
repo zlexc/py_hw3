@@ -7,7 +7,7 @@ from datetime import timedelta
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from tests.helpers import NOW, make_user
+from tests.helpers import NOW, make_rates, make_user, stub_rates
 from valutatrade_hub.core.exceptions import ApiRequestError, CurrencyNotFoundError
 from valutatrade_hub.core.models import Portfolio, Wallet
 from valutatrade_hub.core.rates import RateService
@@ -108,18 +108,22 @@ class RateTests(unittest.TestCase):
 
     def test_refresh_missing_and_expired_rates_with_stub(self):
         self.cache(BTC_USD=(1, NOW - timedelta(minutes=5)))
-        service = RateService(self.storage, clock=lambda: NOW)
+        service = make_rates(self.storage)
         quote = service.get_rate("USD", "BTC")
         self.assertAlmostEqual(quote.rate, 1 / 59337.21)
         self.assertEqual(quote.updated_at, NOW)
-        self.assertEqual(self.storage.load_rates()["source"], "Stub")
+        self.assertEqual(
+            self.storage.load_rates()["pairs"]["BTC_USD"]["source"], "TestStub"
+        )
         self.assertEqual(self.storage.load_rates()["last_refresh"], NOW.isoformat())
 
     def test_refresh_timestamp_can_follow_start_of_request(self):
-        clock = Mock(
-            side_effect=[NOW, NOW + timedelta(seconds=1), NOW + timedelta(seconds=2)]
+        clock = Mock(return_value=NOW + timedelta(seconds=2))
+        service = RateService(
+            self.storage,
+            clock=clock,
+            provider=lambda: stub_rates(lambda: NOW + timedelta(seconds=1)),
         )
-        service = RateService(self.storage, clock=clock)
         quote = service.get_rate("BTC", "USD")
         self.assertEqual(quote.rate, 59337.21)
         self.assertEqual(quote.updated_at, NOW + timedelta(seconds=1))

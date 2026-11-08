@@ -1,5 +1,6 @@
 """Проверяемое JSON-хранилище с атомарной заменой отдельных файлов."""
 
+import fcntl
 import json
 import os
 import tempfile
@@ -15,6 +16,100 @@ class StorageError(ValueError):
     """Данные нельзя безопасно прочитать или сохранить."""
 
 
+def read_json(path: Path, default):
+    try:
+        with path.open(encoding="utf-8") as stream:
+            return json.load(stream)
+    except FileNotFoundError:
+        return default
+    except (OSError, ValueError) as error:
+        raise StorageError(f"Не удалось прочитать {path.name}: {error}") from error
+
+
+def write_json(path: Path, data) -> None:
+    temporary = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as stream:
+            temporary = Path(stream.name)
+            json.dump(data, stream, ensure_ascii=False, indent=2, allow_nan=False)
+            stream.write("\n")
+        os.replace(temporary, path)
+    except (OSError, ValueError) as error:
+        raise StorageError(f"Не удалось сохранить {path.name}: {error}") from error
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+@contextmanager
+def rates_lock(data_dir: Path):
+    """Общий POSIX lock для CLI, инициализации кеша и отдельного парсера."""
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+        with (data_dir / ".rates.lock").open("a") as stream:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+    except OSError as error:
+        raise StorageError("Не удалось заблокировать кеш курсов") from error
+
+
+def normalize_rates(data: dict) -> dict:
+    """Проверить новый или старый формат и вернуть канонический снимок."""
+    if not isinstance(data, dict):
+        raise ValueError("ожидается объект курсов")
+    if "pairs" in data:
+        if set(data) - {"pairs", "last_refresh"}:
+            raise ValueError("неизвестные поля снимка курсов")
+        pairs = data["pairs"]
+        if not isinstance(pairs, dict):
+            raise ValueError("pairs должен быть объектом")
+    else:
+        pairs = {
+            key: value
+            for key, value in data.items()
+            if key not in ("source", "last_refresh")
+        }
+    source = data.get("source", "Legacy")
+    if not isinstance(source, str) or not source.strip():
+        raise ValueError("source должен быть непустой строкой")
+    normalized = {}
+    for pair, entry in pairs.items():
+        if not isinstance(pair, str):
+            raise ValueError("ключ курса должен быть строкой")
+        parts = pair.split("_")
+        if len(parts) != 2 or any(code != utils.currency_code(code) for code in parts):
+            raise ValueError("ожидается пара вида EUR_USD")
+        if not isinstance(entry, dict):
+            raise ValueError("курс должен быть объектом")
+        rate = utils.number(entry["rate"], positive=True)
+        timestamp = utils.parse_time(entry["updated_at"]).isoformat()
+        entry_source = utils.nonempty_text(entry.get("source", source), "source")
+        normalized[pair] = {
+            "rate": rate,
+            "updated_at": timestamp,
+            "source": entry_source,
+        }
+    last_refresh = data.get("last_refresh")
+    if last_refresh is not None:
+        last_refresh = utils.parse_time(last_refresh).isoformat()
+    elif normalized:
+        last_refresh = max(
+            utils.parse_time(entry["updated_at"]) for entry in normalized.values()
+        ).isoformat()
+    return {"pairs": normalized, "last_refresh": last_refresh}
+
+
 class JsonStorage:
     """Файлы пользователей, портфелей и последних курсов."""
 
@@ -28,10 +123,12 @@ class JsonStorage:
         for filename, default in (
             ("users.json", []),
             ("portfolios.json", []),
-            ("rates.json", {}),
         ):
             if not (self.data_dir / filename).exists():
                 self._write(filename, default)
+        with rates_lock(self.data_dir):
+            if not (self.data_dir / "rates.json").exists():
+                self._write("rates.json", {"pairs": {}, "last_refresh": None})
 
     @contextmanager
     def operation(self):
@@ -40,35 +137,10 @@ class JsonStorage:
             yield self
 
     def _read(self, filename: str, default):
-        try:
-            with (self.data_dir / filename).open(encoding="utf-8") as stream:
-                return json.load(stream)
-        except FileNotFoundError:
-            return default
-        except (OSError, ValueError) as error:
-            raise StorageError(f"Не удалось прочитать {filename}: {error}") from error
+        return read_json(self.data_dir / filename, default)
 
     def _write(self, filename: str, data) -> None:
-        temporary = None
-        try:
-            self.data_dir.mkdir(parents=True, exist_ok=True)
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                encoding="utf-8",
-                dir=self.data_dir,
-                prefix=f".{filename}.",
-                suffix=".tmp",
-                delete=False,
-            ) as stream:
-                temporary = Path(stream.name)
-                json.dump(data, stream, ensure_ascii=False, indent=2, allow_nan=False)
-                stream.write("\n")
-            os.replace(temporary, self.data_dir / filename)
-        except (OSError, ValueError) as error:
-            raise StorageError(f"Не удалось сохранить {filename}: {error}") from error
-        finally:
-            if temporary is not None:
-                temporary.unlink(missing_ok=True)
+        write_json(self.data_dir / filename, data)
 
     def load_users(self) -> list[User]:
         data = self._read("users.json", [])
@@ -153,38 +225,19 @@ class JsonStorage:
 
     @staticmethod
     def validate_rates(data: dict) -> None:
-        if not isinstance(data, dict):
-            raise ValueError("ожидается объект курсов")
-        for pair, entry in data.items():
-            if not isinstance(pair, str):
-                raise ValueError("ключ курса должен быть строкой")
-            if pair == "source":
-                if not isinstance(entry, str):
-                    raise ValueError("source должен быть строкой")
-            elif pair == "last_refresh":
-                utils.parse_time(entry)
-            else:
-                parts = pair.split("_")
-                if len(parts) != 2 or any(
-                    code != utils.currency_code(code) for code in parts
-                ):
-                    raise ValueError("ожидается пара вида EUR_USD")
-                if not isinstance(entry, dict):
-                    raise ValueError("курс должен быть объектом")
-                utils.number(entry["rate"], positive=True)
-                utils.parse_time(entry["updated_at"])
+        normalize_rates(data)
 
     def load_rates(self) -> dict:
         data = self._read("rates.json", {})
         try:
-            self.validate_rates(data)
-            return data
+            return normalize_rates(data)
         except (KeyError, TypeError, ValueError) as error:
             raise StorageError(f"Некорректная структура rates.json: {error}") from error
 
     def save_rates(self, data: dict) -> None:
         try:
-            self.validate_rates(data)
+            data = normalize_rates(data)
         except (KeyError, TypeError, ValueError) as error:
             raise StorageError(f"Некорректные данные курсов: {error}") from error
-        self._write("rates.json", data)
+        with rates_lock(self.data_dir):
+            self._write("rates.json", data)

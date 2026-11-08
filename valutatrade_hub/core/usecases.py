@@ -2,10 +2,15 @@
 
 import secrets
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from valutatrade_hub.core import utils
-from valutatrade_hub.core.currencies import get_currency
+from valutatrade_hub.core.currencies import (
+    CryptoCurrency,
+    get_currency,
+    supported_codes,
+)
 from valutatrade_hub.core.exceptions import ApiRequestError, InsufficientFundsError
 from valutatrade_hub.core.models import Portfolio, User
 from valutatrade_hub.core.rates import RateService
@@ -13,6 +18,8 @@ from valutatrade_hub.core.storage import JsonStorage, StorageError
 from valutatrade_hub.decorators import log_action
 from valutatrade_hub.infra.database import DatabaseManager
 from valutatrade_hub.infra.settings import DEFAULT_SETTINGS, Settings, SettingsLoader
+from valutatrade_hub.parser_service.config import ParserConfig
+from valutatrade_hub.parser_service.updater import RatesUpdater, build_updater
 
 
 class WalletService:
@@ -25,14 +32,25 @@ class WalletService:
         *,
         clock: Callable[[], datetime] | None = None,
         settings: Settings | None = None,
+        updater: RatesUpdater | None = None,
     ) -> None:
         if settings is None:
             settings = SettingsLoader() if storage is None else DEFAULT_SETTINGS
         self.settings = settings
         self.storage = storage if storage is not None else DatabaseManager(settings)
         self.clock = clock or (lambda: datetime.now(UTC))
+        self.updater = updater
+        if rates is None and self.updater is None:
+            configuration = ParserConfig.from_settings(self.settings)
+            # Явно переданное хранилище определяет пути и для парсера.
+            if configuration.data_dir != self.storage.data_dir.resolve():
+                configuration = replace(configuration, data_dir=self.storage.data_dir)
+            self.updater = build_updater(configuration, clock=self.clock)
         self.rates = rates or RateService(
-            self.storage, clock=self.clock, settings=self.settings
+            self.storage,
+            clock=self.clock,
+            settings=self.settings,
+            refresher=self.updater.refresh if self.updater is not None else None,
         )
         self.current_user: User | None = None
 
@@ -182,4 +200,67 @@ class WalletService:
             "rate": quote.rate,
             "inverse_rate": inverse,
             "updated_at": quote.updated_at,
+        }
+
+    def update_rates(self, source: str | None = None):
+        if self.updater is None:
+            raise ApiRequestError("Parser Service не настроен")
+        return self.updater.run_update(source)
+
+    def show_rates(self, currency=None, top=None, base_currency=None) -> dict:
+        if top is not None and (
+            isinstance(top, bool) or not isinstance(top, int) or top <= 0
+        ):
+            raise ValueError("'top' должен быть положительным целым числом")
+        base = get_currency(
+            base_currency
+            if base_currency is not None
+            else self.settings.get("DEFAULT_BASE_CURRENCY", "USD")
+        ).code
+        selected = utils.currency_code(currency) if currency is not None else None
+        snapshot = self.storage.load_rates()
+        pairs = snapshot["pairs"]
+        if not pairs:
+            return {"rows": [], "empty": True, "missing": [], "last_refresh": None}
+        cached_codes = {code for pair in pairs for code in pair.split("_")}
+        candidates = (cached_codes - {base}) & set(supported_codes())
+        if selected is not None:
+            candidates = (
+                {selected}
+                if selected in cached_codes and selected in supported_codes()
+                else set()
+            )
+        if top is not None:
+            candidates = {
+                code
+                for code in candidates
+                if isinstance(get_currency(code), CryptoCurrency)
+            }
+        rows, missing = [], []
+        for code in sorted(candidates):
+            quote = self.rates.cached_rate(
+                code, base, snapshot=snapshot, allow_stale=True
+            )
+            if quote is None:
+                missing.append(code)
+                continue
+            rows.append(
+                {
+                    "pair": f"{code}_{base}",
+                    "rate": quote.rate,
+                    "updated_at": quote.updated_at,
+                    "source": quote.source,
+                    "stale": not self.rates.is_fresh(quote.updated_at),
+                }
+            )
+        if top is not None:
+            rows.sort(key=lambda row: (-row["rate"], row["pair"]))
+            rows = rows[:top]
+        if selected is not None and not rows and selected not in missing:
+            missing.append(selected)
+        return {
+            "rows": rows,
+            "empty": False,
+            "missing": missing,
+            "last_refresh": snapshot["last_refresh"],
         }

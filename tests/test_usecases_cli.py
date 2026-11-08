@@ -7,7 +7,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock, patch
 
-from tests.helpers import NOW
+from tests.helpers import NOW, make_rates
 from valutatrade_hub.cli.interface import WalletApplication
 from valutatrade_hub.core.exceptions import ApiRequestError
 from valutatrade_hub.core.rates import RateService
@@ -21,7 +21,9 @@ class ServiceFixture(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name)
         self.storage = JsonStorage(self.directory)
-        self.service = WalletService(self.storage, clock=lambda: NOW)
+        self.service = WalletService(
+            self.storage, rates=make_rates(self.storage), clock=lambda: NOW
+        )
 
     def register_and_login(self, name="alice", password="1234"):
         self.service.register(name, password)
@@ -116,7 +118,10 @@ class TradingTests(ServiceFixture):
         self.assertAlmostEqual(bought["estimated_value"], 0.05 * 59337.21)
         sold = self.service.sell("BTC", 0.01)
         self.assertAlmostEqual(sold["after"], 0.04)
-        restarted = WalletService(JsonStorage(self.directory), clock=lambda: NOW)
+        restored_storage = JsonStorage(self.directory)
+        restarted = WalletService(
+            restored_storage, rates=make_rates(restored_storage), clock=lambda: NOW
+        )
         self.assertIsNone(restarted.current_user)
         restarted.login("alice", "1234")
         result = restarted.show_portfolio()
@@ -174,7 +179,7 @@ class TradingTests(ServiceFixture):
             with self.assertRaisesRegex(ApiRequestError, "Курс BTC→USD недоступен"):
                 operation("BTC", 0.01)
             self.assertEqual(self.account_files(), original)
-        self.service.rates = RateService(self.storage, clock=lambda: NOW)
+        self.service.rates = make_rates(self.storage)
         with patch.object(
             self.storage, "save_portfolios", side_effect=StorageError("disk full")
         ):

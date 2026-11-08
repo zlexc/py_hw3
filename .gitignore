@@ -16,10 +16,12 @@ wheels/
 .DS_Store
 .env
 .env.*
+!.env.example
 
 # Runtime JSON storage
 data/*.json
 data/.*.tmp
+data/.rates.lock
 
 # Local configuration and operation logs
 /config.json

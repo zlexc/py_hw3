@@ -17,7 +17,7 @@ from valutatrade_hub.core.exceptions import (
 )
 from valutatrade_hub.core.usecases import WalletService
 from valutatrade_hub.infra.settings import SettingsLoader
-from valutatrade_hub.logging_config import setup_logging
+from valutatrade_hub.logging_config import setup_logging, setup_parser_logging
 
 
 class CommandParser(argparse.ArgumentParser):
@@ -62,6 +62,12 @@ def build_parser(output: TextIO) -> CommandParser:
     command = commands.add_parser("get-rate", help="получить курс валюты")
     command.add_argument("--from", dest="from_currency", required=True)
     command.add_argument("--to", dest="to_currency", required=True)
+    command = commands.add_parser("update-rates", help="обновить курсы из API")
+    command.add_argument("--source", choices=("coingecko", "exchangerate"))
+    command = commands.add_parser("show-rates", help="показать локальный кеш курсов")
+    command.add_argument("--currency")
+    command.add_argument("--top", type=int)
+    command.add_argument("--base")
     commands.add_parser("help", help="показать справку")
     commands.add_parser("exit", help="завершить программу")
     return parser
@@ -105,6 +111,7 @@ class WalletApplication:
             except ApiRequestError as error:
                 self._print(str(error))
                 self._print("Повторите попытку позже или проверьте подключение к сети.")
+                self._print("Для обновления курсов: update-rates")
             except (ValueError, OSError) as error:
                 self._print(f"Ошибка: {error}")
 
@@ -166,7 +173,54 @@ class WalletApplication:
                 self._print(
                     f"Обратный курс {target}→{source}: {result['inverse_rate']:.8g}"
                 )
+            case "update-rates":
+                result = self.service.update_rates(args.source)
+                status = (
+                    "завершено с ошибками" if result.failed_sources else "выполнено"
+                )
+                self._print(
+                    f"Обновление {status}. Обновлено курсов: {result.changed_pairs}."
+                )
+                self._print(f"Последнее обновление: {result.last_refresh}")
+                for reason in result.failed_sources.values():
+                    self._print(reason)
+                if result.failed_sources:
+                    self._print("Подробности: parser.log в настроенном каталоге логов.")
+            case "show-rates":
+                self._show_rates(
+                    self.service.show_rates(args.currency, args.top, args.base)
+                )
         return True
+
+    def _show_rates(self, result: dict) -> None:
+        if result["empty"]:
+            self._print(
+                "Локальный кеш курсов пуст. Выполните 'update-rates', "
+                "чтобы загрузить данные."
+            )
+            return
+        self._print(f"Курсы из кеша (последнее обновление: {result['last_refresh']}):")
+        if result["rows"]:
+            table = PrettyTable(
+                ["Пара", "Курс", "Источник", "Обновлено (UTC)", "Актуальность"]
+            )
+            for row in result["rows"]:
+                table.add_row(
+                    [
+                        row["pair"],
+                        f"{row['rate']:.10g}",
+                        row["source"],
+                        row["updated_at"].strftime("%Y-%m-%d %H:%M:%S"),
+                        "УСТАРЕЛ" if row["stale"] else "Свежий",
+                    ]
+                )
+            self._print(str(table))
+        for code in result["missing"]:
+            self._print(f"Курс для '{code}' не найден в кеше.")
+        if not result["rows"] and not result["missing"]:
+            self._print("Нет курсов, соответствующих фильтрам.")
+        if any(row["stale"] for row in result["rows"]):
+            self._print("Есть устаревшие данные. Выполните update-rates.")
 
     def _show_portfolio(self, result: dict) -> None:
         base = result["base_currency"]
@@ -209,6 +263,7 @@ def main() -> None:
     try:
         settings = SettingsLoader()
         setup_logging(settings)
+        setup_parser_logging(settings)
         service = WalletService(settings=settings)
     except (ValueError, OSError) as error:
         print(f"Ошибка: {error}", file=sys.stderr)

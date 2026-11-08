@@ -65,7 +65,9 @@ class CurrencyTests(unittest.TestCase):
         first.name = "Changed"
         self.assertIsNot(first, second)
         self.assertEqual(second.name, "Bitcoin")
-        self.assertEqual(set(supported_codes()), {"USD", "EUR", "RUB", "BTC", "ETH"})
+        self.assertEqual(
+            set(supported_codes()), {"USD", "EUR", "GBP", "RUB", "BTC", "ETH", "SOL"}
+        )
         self.assertIsInstance(get_currency("USD"), FiatCurrency)
         self.assertIsInstance(get_currency("ETH"), CryptoCurrency)
         with self.assertRaisesRegex(CurrencyNotFoundError, "Неизвестная валюта 'ABC'"):
